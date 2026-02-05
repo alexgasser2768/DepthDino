@@ -1,0 +1,7 @@
+timm
+safetensors
+torch
+torchvision
+h5py
+tqdm
+opencv-python
