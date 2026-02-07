@@ -84,3 +84,73 @@ class GradientMatchingLoss(nn.Module):
         loss_y = F.l1_loss(pred_dy[mask_y], target_dy[mask_y])
 
         return loss_x + loss_y
+    
+
+class VirtualNormalLoss(nn.Module):
+    def __init__(self, num_samples=2000, distance_threshold=0.1):
+        super().__init__()
+        self.num_samples = num_samples
+        self.distance_threshold = distance_threshold
+
+    def get_points(self, pred, target):
+        n, _, w, h = target.shape  # n is batch size
+
+        # get (n x m x 1) in range [0, x] and [0, y] random integers
+        u = torch.randint(0, w, (n, self.num_samples, 1), device=target.device)
+        v = torch.randint(0, h, (n, self.num_samples, 1), device=target.device)
+        
+        # Sample points from z matrix (n x 1 x w x h) -> (n x m x 1)
+        batch_indices = torch.arange(n, device=target.device).unsqueeze(1)
+
+        pred_depths = pred[batch_indices, :, u.squeeze(-1), v.squeeze(-1)]
+        target_depths = target[batch_indices, :, u.squeeze(-1), v.squeeze(-1)]
+
+        # Create u, v, z matrices (n x m x 3)
+        pred_output = torch.cat([u.float(), v.float(), pred_depths], dim=-1)
+        target_output = torch.cat([u.float(), v.float(), target_depths], dim=-1)
+
+        # Normalize coordinates by width and height
+        pred_output[..., 0] /= w
+        pred_output[..., 1] /= h
+        target_output[..., 0] /= w
+        target_output[..., 1] /= h
+
+        return pred_output, target_output
+
+    def get_normals(self, pred, target):
+        p1_pred, p1_target = self.get_points(pred, target)
+        p2_pred, p2_target = self.get_points(pred, target)
+        p3_pred, p3_target = self.get_points(pred, target)
+
+        # Check if points are too close or collinear and remove with a mask
+        vec12_target = p2_target - p1_target
+        vec13_target = p3_target - p1_target
+
+        cross_target = torch.cross(vec12_target, vec13_target, dim=-1)
+        norm_target = torch.norm(cross_target, dim=-1)
+
+        # Remove points that are too close, collinear, or outliers (z = 0)
+        mask = (norm_target > self.distance_threshold) & \
+               (p1_target[..., 2] > 0) & \
+               (p2_target[..., 2] > 0) & \
+               (p3_target[..., 2] > 0)
+
+        # Check if points are too close or collinear and remove with a mask
+        vec12_pred = p2_pred - p1_pred
+        vec13_pred = p3_pred - p1_pred
+
+        cross_pred = torch.cross(vec12_pred, vec13_pred, dim=-1)
+
+        # Return valid normal vectors for target and prediction
+        n_target = F.normalize(cross_target[mask], dim=-1)
+        n_pred = F.normalize(cross_pred[mask], dim=-1)
+        
+        return n_pred, n_target
+
+    def forward(self, pred, target):
+        n_pred, n_target = self.get_normals(pred, target)
+
+        if n_pred.shape[0] == 0:
+            return torch.tensor(0.0, device=pred.device, requires_grad=True)
+
+        return F.l1_loss(n_pred, n_target)

@@ -7,7 +7,7 @@ from tqdm import tqdm
 import os, glob, cv2, logging
 
 from model import ConvNeXtDepthModel, PREPROCESS
-from losses import DepthLoss, SILogLoss, GradientMatchingLoss
+from losses import DepthLoss, SILogLoss, GradientMatchingLoss, VirtualNormalLoss
 
 PATCH_WIDTH = 224
 PATCH_HEIGHT = 224
