@@ -1,18 +1,16 @@
-import os
-import glob
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+
 import numpy as np
-import cv2
 from tqdm import tqdm
-import logging
+import os, glob, cv2, logging
 
-from agent import ConvNeXtDepthModel, DepthLoss, SILogLoss, GradientMatchingLoss, PREPROCESS
+from model import ConvNeXtDepthModel, PREPROCESS
+from losses import DepthLoss, SILogLoss, GradientMatchingLoss
 
-PATCH_WIDTH = 480
-PATCH_HEIGHT = 352
+PATCH_WIDTH = 224
+PATCH_HEIGHT = 224
 NUM_WORKERS = 16
 
 logger = logging.getLogger(__name__)
