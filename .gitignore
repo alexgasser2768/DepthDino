@@ -1,3 +1,5 @@
 data/
 venv/
 weights/
+log
+__pycache__/

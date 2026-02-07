@@ -21,7 +21,7 @@ def run_webcam():
     logger.info(f"Loading model on {DEVICE}...")
     
     # Initialize model
-    model = ConvNeXtDepthModel(CONFIG_FILE, WEIGHTS_FILE, mlp_weights_path="weights/decoder/best_model.pth")
+    model = ConvNeXtDepthModel(CONFIG_FILE, WEIGHTS_FILE, mlp_weights_path="weights/decoder/best_model2.pth")
     model.to(DEVICE)
     model.eval()
 
@@ -67,7 +67,7 @@ def run_webcam():
 
             # Apply colormap (Magma or Inferno look good for depth)
             overlayed = cv2.addWeighted(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), 0.3, depth_uint8, 0.7, 0)
-            depth_color = cv2.applyColorMap(depth_uint8, cv2.COLORMAP_INFERNO)
+            depth_color = cv2.applyColorMap(depth_uint8, cv2.COLORMAP_PLASMA)
 
 
             # 4. Display Result
