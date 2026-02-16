@@ -19,10 +19,6 @@ logging.basicConfig(format='%(asctime)s - %(name)s - [%(levelname)s]: %(message)
 
 class DepthDataset(Dataset):
     def __init__(self, data_dir):
-        """
-        Args:
-            data_dir (str): Path to directory containing .hdf5 files
-        """
         self.data_dir = data_dir
 
         # Find all color files

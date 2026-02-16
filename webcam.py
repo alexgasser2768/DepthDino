@@ -1,8 +1,11 @@
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 import cv2, time, logging
 
 from model import ConvNeXtDepthModel, PREPROCESS
+
+CMAP = plt.get_cmap('Spectral')
 
 logger = logging.getLogger(__name__) 
 logging.basicConfig(format='%(asctime)s - %(name)s - [%(levelname)s]: %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', filename="log", level=logging.INFO)
@@ -55,8 +58,8 @@ def run_webcam():
             else:
                 depth_norm = np.zeros_like(depth_np)
 
-            depth_uint8 = (255 * depth_norm).astype(np.uint8)
-            depth_color = cv2.applyColorMap(depth_uint8, cv2.COLORMAP_PARULA)
+            depth_color = (255 * CMAP(depth_norm)[:, :, :3]).astype(np.uint8)
+            depth_color = cv2.cvtColor(depth_color, cv2.COLOR_RGB2BGR)
 
             # Stack images horizontally
             combined = np.hstack((frame, depth_color))
