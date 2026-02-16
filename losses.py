@@ -84,7 +84,70 @@ class GradientMatchingLoss(nn.Module):
         loss_y = F.l1_loss(pred_dy[mask_y], target_dy[mask_y])
 
         return loss_x + loss_y
+
+
+class AleatoricSurfaceNormalLoss(nn.Module):
+    """
+    Implements the Aleatoric Surface Normal Loss (Angular vonMF) from:
+    'Estimating and Exploiting the Aleatoric Uncertainty in Surface Normal Estimation' [Bae et al. 2021]
     
+    Ref: https://arxiv.org/abs/2109.09881 (Equation 5)
+    """
+    def __init__(self, use_intrinsics=False):
+        super().__init__()
+        self.use_intrinsics = use_intrinsics
+        self.eps = 1e-6
+
+    def depth_to_normal(self, depth):
+        """
+        Converts a depth map to surface normals using finite differences.
+        Assumes depth is (B, 1, H, W).
+        """
+        # Calculate gradients (dy, dx)
+        # Pad to maintain shape matching the input depth
+        padded_depth = F.pad(depth, (0, 1, 0, 1), mode='replicate')
+
+        # d_depth / dx
+        dz_dx = padded_depth[:, :, :, 1:] - padded_depth[:, :, :, :-1]
+        dz_dx = dz_dx[:, :, :depth.shape[2], :] # Crop back to H
+
+        # d_depth / dy
+        dz_dy = padded_depth[:, :, 1:, :] - padded_depth[:, :, :-1, :]
+        dz_dy = dz_dy[:, :, :, :depth.shape[3]] # Crop back to W
+
+        # Construct surface normals: [-dz/dx, -dz/dy, 1]
+        # Note: Without explicit intrinsics, this is an approximation in image space.
+        # This is standard for depth-consistency losses where intrinsics are fixed/unknown.
+        normal = torch.cat([-dz_dx, -dz_dy, torch.ones_like(depth)], dim=1)
+
+        # Normalize to unit vectors
+        return F.normalize(normal, p=2, dim=1, eps=self.eps)
+
+    def forward(self, pred, target):
+        """
+        Args:
+            pred: (B, 1, H, W) Depth map [in meters]
+            target: (B, 1, H, W) Ground Truth Depth map [in meters]
+        """
+        mask = target > 0
+        if not mask.any():
+            return torch.tensor(0.0, device=pred.device, requires_grad=True)
+
+        # Convert Depth to Surface Normals
+        pred_norm = self.depth_to_normal(pred)
+        target_norm = self.depth_to_normal(target)
+
+        # Compute Angular Error (Theta)
+        # Dot product clamped to [-1, 1] for numerical stability of acos
+        dot_product = torch.sum(pred_norm * target_norm, dim=1, keepdim=True)
+        dot_product = torch.clamp(dot_product, -1.0 + self.eps, 1.0 - self.eps)
+        theta = torch.acos(dot_product)
+
+        # --- Angular Loss Only (Geometric Consistency) ---
+        # Paper argues minimizing Angle is better than L2. 
+        # This is effectively Eq. 5 with constant Kappa.
+        return theta[mask].mean()
+
 
 class VirtualNormalLoss(nn.Module):
     def __init__(self, num_samples=2000, distance_threshold=0.1):

@@ -54,7 +54,7 @@ class ConvNeXtDepthModel(nn.Module):
         # --- B. Instantiate Backbone (Frozen) ---
         logger.info(f"Loading Backbone: {arch}")
         # global_pool='' ensures we get the 7x7 spatial feature map, not a vector
-        self.backbone = timm.create_model(arch, pretrained=False, num_classes=0, global_pool='')
+        self.backbone = timm.create_model(arch, pretrained=False, features_only=True)
 
         # Load Safetensors and freeze backbone
         logger.info(f"Loading weights from {dino_weights_path}...")
@@ -64,21 +64,32 @@ class ConvNeXtDepthModel(nn.Module):
             param.requires_grad = False
 
         # --- C. Learnable MLP Decoder ---
-        # ConvNeXt output is 1/32 scale (e.g. 7x7 for 224 input).
-        # We need 5 upsampling stages to get back to 1/1 scale (2^5 = 32).
-        self.decoder = nn.Sequential(
-            # Stage 1: 1/32 -> 1/16
-            LearnableUpsampleBlock(num_features, 512),
-            # Stage 2: 1/16 -> 1/8
-            LearnableUpsampleBlock(512, 256),
-            # Stage 3: 1/8 -> 1/4
-            LearnableUpsampleBlock(256, 128),
-            # Stage 4: 1/4 -> 1/2
-            LearnableUpsampleBlock(128, 64),
-            # Stage 5: 1/2 -> 1/1 (Original Resolution)
-            LearnableUpsampleBlock(64, 32),
+        enc_channels = self.backbone.feature_info.channels()
 
-            # Final Projection to Depth (1 channel)
+        # Stage 1: 1/32 -> 1/16
+        # Input: feat32 (enc_channels[3])
+        self.up1 = LearnableUpsampleBlock(enc_channels[3], enc_channels[2])
+        
+        # Stage 2: 1/16 -> 1/8
+        # Input: up1 output + feat16 skip (enc_channels[2] + enc_channels[2])
+        self.up2 = LearnableUpsampleBlock(enc_channels[2] * 2, enc_channels[1])
+        
+        # Stage 3: 1/8 -> 1/4
+        # Input: up2 output + feat8 skip (enc_channels[1] + enc_channels[1])
+        self.up3 = LearnableUpsampleBlock(enc_channels[1] * 2, enc_channels[0])
+        
+        # Stage 4: 1/4 -> 1/2
+        # Input: up3 output + feat4 skip (enc_channels[0] + enc_channels[0])
+        decoder_ch = enc_channels[0] // 2
+        self.up4 = LearnableUpsampleBlock(enc_channels[0] * 2, decoder_ch)
+        
+        # Stage 5: 1/2 -> 1/1 (Original Resolution)
+        # Note: ConvNeXt doesn't natively output a 1/2 stride feature map due to its 4x4 stem patchify.
+        # So we just upsample without a skip connection here.
+        self.up5 = LearnableUpsampleBlock(decoder_ch, 32)
+
+        # Final Projection to Depth (1 channel)
+        self.head = nn.Sequential(
             nn.Conv2d(32, 1, kernel_size=3, padding=1),
             nn.Softplus() # Force positive depth
         )
@@ -98,11 +109,31 @@ class ConvNeXtDepthModel(nn.Module):
 
     def forward(self, x):
         # 1. Extract Features (Frozen)
-        # Input: [B, 3, H, W] -> Output: [B, 768, H/32, W/32]
+        # Returns a list: [feat4, feat8, feat16, feat32]
+        # Strides:         1/4    1/8    1/16    1/32
         features = self.backbone(x)
+        feat4, feat8, feat16, feat32 = features
 
-        # 2. Decode & Upsample (Learnable)
-        # Input: [B, 768, H/32, W/32] -> Output: [B, 1, H, W]
-        depth_map = self.decoder(features)
+        # 2. Decode & Upsample with Skip Connections
+        # 1/32 -> 1/16
+        x = self.up1(feat32)
+        x = torch.cat([x, feat16], dim=1)  # Concat skip connection
+        
+        # 1/16 -> 1/8
+        x = self.up2(x)
+        x = torch.cat([x, feat8], dim=1)   # Concat skip connection
+        
+        # 1/8 -> 1/4
+        x = self.up3(x)
+        x = torch.cat([x, feat4], dim=1)   # Concat skip connection
+        
+        # 1/4 -> 1/2
+        x = self.up4(x)
+        
+        # 1/2 -> 1/1
+        x = self.up5(x)
+
+        # Final prediction
+        depth_map = self.head(x)
 
         return depth_map

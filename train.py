@@ -7,7 +7,7 @@ from tqdm import tqdm
 import os, glob, cv2, logging
 
 from model import ConvNeXtDepthModel, PREPROCESS
-from losses import DepthLoss, SILogLoss, GradientMatchingLoss, VirtualNormalLoss
+from losses import DepthLoss, SILogLoss, GradientMatchingLoss, AleatoricSurfaceNormalLoss, VirtualNormalLoss
 
 PATCH_WIDTH = 224
 PATCH_HEIGHT = 224
@@ -15,8 +15,6 @@ NUM_WORKERS = 16
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(asctime)s - %(name)s - [%(levelname)s]: %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', filename="log", level=logging.INFO)
-
-LAMBDA = 5
 
 class DepthDataset(Dataset):
     def __init__(self, data_dir):
@@ -143,9 +141,10 @@ if __name__ == "__main__":
     depth_loss = DepthLoss()
     silog_loss = SILogLoss()
     gradient_loss = GradientMatchingLoss()
+    sn_loss = AleatoricSurfaceNormalLoss()
     vn_loss = VirtualNormalLoss()
 
-    criterion = lambda preds, targets: depth_loss(preds, targets) + LAMBDA * silog_loss(preds, targets) + gradient_loss(preds, targets) + vn_loss(preds, targets)
+    criterion = lambda preds, targets: depth_loss(preds, targets) + silog_loss(preds, targets) + gradient_loss(preds, targets) + sn_loss(preds, targets) + vn_loss(preds, targets)
 
     # Training Loop
     logger.info("Starting training...")
