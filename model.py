@@ -49,7 +49,6 @@ class ConvNeXtDepthModel(nn.Module):
             cfg = json.load(f)
 
         arch = cfg.get("architecture", "convnext_tiny")
-        num_features = cfg.get("num_features", 768)
 
         # --- B. Instantiate Backbone (Frozen) ---
         logger.info(f"Loading Backbone: {arch}")
