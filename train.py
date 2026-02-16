@@ -113,7 +113,7 @@ if __name__ == "__main__":
     DATA_DIR = "data/"
     CONFIG_FILE = "weights/tiny/config.json"
     WEIGHTS_FILE = "weights/tiny/model.safetensors"
-    BATCH_SIZE = 100
+    BATCH_SIZE = 200
     LEARNING_RATE = 1e-4
     EPOCHS = 50
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
