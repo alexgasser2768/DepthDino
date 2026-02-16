@@ -58,7 +58,7 @@ class ConvNeXtDepthModel(nn.Module):
         # Load Safetensors and freeze backbone
         logger.info(f"Loading weights from {dino_weights_path}...")
         raw_weights = load_file(dino_weights_path)
-        self.backbone.load_state_dict(raw_weights, strict=True)
+        self.backbone.load_state_dict(raw_weights, strict=False)
         for param in self.backbone.parameters():
             param.requires_grad = False
 
