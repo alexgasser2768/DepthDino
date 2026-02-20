@@ -21,7 +21,7 @@ def run_webcam():
     logger.info(f"Loading model on {DEVICE}...")
 
     # Initialize model
-    model = ConvNeXtDepthModel(CONFIG_FILE, WEIGHTS_FILE, mlp_weights_path="weights/decoder/best_model2.pth")
+    model = ConvNeXtDepthModel(CONFIG_FILE, WEIGHTS_FILE, mlp_weights_path="weights/decoder/best_model.pth")
     model.to(DEVICE)
     model.eval()
 

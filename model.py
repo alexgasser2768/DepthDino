@@ -106,7 +106,7 @@ class ConvNeXtDepthModel(nn.Module):
             else:
                 logging.warning(f"Partial load. Missing keys: {len(missing)}")
 
-    def forward(self, x):
+    def forward(self, x, return_feats=False):
         # 1. Extract Features (Frozen)
         # Returns a list: [feat4, feat8, feat16, feat32]
         # Strides:         1/4    1/8    1/16    1/32
@@ -134,5 +134,8 @@ class ConvNeXtDepthModel(nn.Module):
 
         # Final prediction
         depth_map = self.head(x)
+
+        if return_feats:
+            return depth_map, features
 
         return depth_map
