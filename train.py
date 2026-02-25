@@ -113,7 +113,7 @@ if __name__ == "__main__":
     DATA_DIR = "data/"
     CONFIG_FILE = "weights/tiny/config.json"
     WEIGHTS_FILE = "weights/tiny/model.safetensors"
-    BATCH_SIZE = 200
+    BATCH_SIZE = 300
     LEARNING_RATE = 1e-4
     EPOCHS = 50
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -141,10 +141,9 @@ if __name__ == "__main__":
     depth_loss = DepthLoss()
     silog_loss = SILogLoss()
     gradient_loss = GradientMatchingLoss()
-    sn_loss = AleatoricSurfaceNormalLoss()
     vn_loss = VirtualNormalLoss()
 
-    criterion = lambda preds, targets: depth_loss(preds, targets) + silog_loss(preds, targets) + gradient_loss(preds, targets) + sn_loss(preds, targets) + vn_loss(preds, targets)
+    criterion = lambda preds, targets: depth_loss(preds, targets) + silog_loss(preds, targets) + gradient_loss(preds, targets) + vn_loss(preds, targets)
 
     # Training Loop
     logger.info("Starting training...")

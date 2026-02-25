@@ -21,7 +21,7 @@ def run_webcam():
     logger.info(f"Loading model on {DEVICE}...")
 
     # Initialize model
-    model = ConvNeXtDepthModel(CONFIG_FILE, WEIGHTS_FILE, mlp_weights_path="weights/decoder/best_model2.pth")
+    model = ConvNeXtDepthModel(CONFIG_FILE, WEIGHTS_FILE, mlp_weights_path="weights/decoder/best_model_sofar.pth")
     model.to(DEVICE)
     model.eval()
 
@@ -58,9 +58,9 @@ def run_webcam():
             else:
                 depth_norm = np.zeros_like(depth_np)
 
-            depth_color = (255 * CMAP(depth_norm)[:, :, :3]).astype(np.uint8)
-            depth_color = cv2.cvtColor(depth_color, cv2.COLOR_RGB2BGR)
-
+            depth_uint8 = (255 * depth_norm).astype(np.uint8)
+            depth_color = cv2.applyColorMap(depth_uint8, cv2.COLORMAP_PARULA)
+            
             # Stack images horizontally
             combined = np.hstack((frame, depth_color))
 

@@ -150,70 +150,110 @@ class AleatoricSurfaceNormalLoss(nn.Module):
 
 
 class VirtualNormalLoss(nn.Module):
-    def __init__(self, num_samples=2000, distance_threshold=0.1):
+    def __init__(self, num_samples=2000, distance_threshold=0.05, sin_thresh=0.1, eps=1e-6):
         super().__init__()
         self.num_samples = num_samples
         self.distance_threshold = distance_threshold
+        self.sin_thresh = sin_thresh
+        self.eps = eps
 
-    def get_points(self, pred, target):
-        n, _, w, h = target.shape  # n is batch size
+    def _sample_triplets(self, target):
+        B, _, H, W = target.shape
+        device = target.device
+        # one set of matched triplets
+        uA = torch.randint(0, W, (B, self.num_samples), device=device)
+        vA = torch.randint(0, H, (B, self.num_samples), device=device)
+        uB = torch.randint(0, W, (B, self.num_samples), device=device)
+        vB = torch.randint(0, H, (B, self.num_samples), device=device)
+        uC = torch.randint(0, W, (B, self.num_samples), device=device)
+        vC = torch.randint(0, H, (B, self.num_samples), device=device)
+        return (uA, vA, uB, vB, uC, vC)
 
-        # get (n x m x 1) in range [0, x] and [0, y] random integers
-        u = torch.randint(0, w, (n, self.num_samples, 1), device=target.device)
-        v = torch.randint(0, h, (n, self.num_samples, 1), device=target.device)
-        
-        # Sample points from z matrix (n x 1 x w x h) -> (n x m x 1)
-        batch_indices = torch.arange(n, device=target.device).unsqueeze(1)
+    def _gather(self, d, u, v):
+        B = d.shape[0]
+        b = torch.arange(B, device=d.device).unsqueeze(1)
+        return d[b, 0, v, u]  # (B,N)
 
-        pred_depths = pred[batch_indices, :, u.squeeze(-1), v.squeeze(-1)]
-        target_depths = target[batch_indices, :, u.squeeze(-1), v.squeeze(-1)]
+    def _build_points(self, u, v, d, H, W):
+        # canonical intrinsics-free pseudo camera (centered)
+        cx = (W - 1) * 0.5
+        cy = (H - 1) * 0.5
+        u_n = (u.to(d.dtype) - cx) / float(W)
+        v_n = (v.to(d.dtype) - cy) / float(H)
 
-        # Create u, v, z matrices (n x m x 3)
-        pred_output = torch.cat([u.float(), v.float(), pred_depths], dim=-1)
-        target_output = torch.cat([u.float(), v.float(), target_depths], dim=-1)
-
-        # Normalize coordinates by width and height
-        pred_output[..., 0] /= w
-        pred_output[..., 1] /= h
-        target_output[..., 0] /= w
-        target_output[..., 1] /= h
-
-        return pred_output, target_output
+        x = d * u_n
+        y = d * v_n
+        z = d
+        return torch.stack([x, y, z], dim=-1)  # (B,N,3)
 
     def get_normals(self, pred, target):
-        p1_pred, p1_target = self.get_points(pred, target)
-        p2_pred, p2_target = self.get_points(pred, target)
-        p3_pred, p3_target = self.get_points(pred, target)
+        B, _, H, W = target.shape
+        uA, vA, uB, vB, uC, vC = self._sample_triplets(target)
 
-        # Check if points are too close or collinear and remove with a mask
-        vec12_target = p2_target - p1_target
-        vec13_target = p3_target - p1_target
+        dA_gt = self._gather(target, uA, vA)
+        dB_gt = self._gather(target, uB, vB)
+        dC_gt = self._gather(target, uC, vC)
 
-        cross_target = torch.cross(vec12_target, vec13_target, dim=-1)
-        norm_target = torch.norm(cross_target, dim=-1)
+        dA_pr = self._gather(pred, uA, vA)
+        dB_pr = self._gather(pred, uB, vB)
+        dC_pr = self._gather(pred, uC, vC)
 
-        # Remove points that are too close, collinear, or outliers (z = 0)
-        mask = (norm_target > self.distance_threshold) & \
-               (p1_target[..., 2] > 0) & \
-               (p2_target[..., 2] > 0) & \
-               (p3_target[..., 2] > 0)
+        # validity: require both gt and pred depths > 0
+        valid = (dA_gt > 0) & (dB_gt > 0) & (dC_gt > 0) & (dA_pr > 0) & (dB_pr > 0) & (dC_pr > 0)
+        if not valid.any():
+            return None, None
 
-        # Check if points are too close or collinear and remove with a mask
-        vec12_pred = p2_pred - p1_pred
-        vec13_pred = p3_pred - p1_pred
+        PA_gt = self._build_points(uA, vA, dA_gt, H, W)
+        PB_gt = self._build_points(uB, vB, dB_gt, H, W)
+        PC_gt = self._build_points(uC, vC, dC_gt, H, W)
 
-        cross_pred = torch.cross(vec12_pred, vec13_pred, dim=-1)
+        PA_pr = self._build_points(uA, vA, dA_pr, H, W)
+        PB_pr = self._build_points(uB, vB, dB_pr, H, W)
+        PC_pr = self._build_points(uC, vC, dC_pr, H, W)
 
-        # Return valid normal vectors for target and prediction
-        n_target = F.normalize(cross_target[mask], dim=-1)
-        n_pred = F.normalize(cross_pred[mask], dim=-1)
-        
-        return n_pred, n_target
+        AB = PB_gt - PA_gt
+        AC = PC_gt - PA_gt
+        BC = PC_gt - PB_gt
+
+        # R2: long-range distances on GT geometry
+        distAB = torch.linalg.norm(AB, dim=-1)
+        distAC = torch.linalg.norm(AC, dim=-1)
+        distBC = torch.linalg.norm(BC, dim=-1)
+        valid = valid & (distAB > self.distance_threshold) & (distAC > self.distance_threshold) & (distBC > self.distance_threshold)
+        if not valid.any():
+            return None, None
+
+        # R1: non-collinear via sin(angle) (scale-invariant)
+        cross = torch.cross(AB, AC, dim=-1)
+        cross_norm = torch.linalg.norm(cross, dim=-1)
+        sinang = cross_norm / (distAB * distAC).clamp_min(self.eps)
+        valid = valid & (sinang > self.sin_thresh)
+        if not valid.any():
+            return None, None
+
+        # normals (gt & pred)
+        n_gt = torch.cross(PB_gt - PA_gt, PC_gt - PA_gt, dim=-1)
+        n_pr = torch.cross(PB_pr - PA_pr, PC_pr - PA_pr, dim=-1)
+
+        n_gt_norm = torch.linalg.norm(n_gt, dim=-1)
+        n_pr_norm = torch.linalg.norm(n_pr, dim=-1)
+        valid = valid & (n_gt_norm > self.eps) & (n_pr_norm > self.eps)
+        if not valid.any():
+            return None, None
+
+        n_gt = F.normalize(n_gt[valid], dim=-1, eps=self.eps)
+        n_pr = F.normalize(n_pr[valid], dim=-1, eps=self.eps)
+        return n_pr, n_gt
 
     def forward(self, pred, target):
-        n_pred, n_target = self.get_normals(pred, target)
-
-        if n_pred.shape[0] == 0:
+        normals = self.get_normals(pred, target)
+        if normals[0] is None:
             return torch.tensor(0.0, device=pred.device, requires_grad=True)
 
-        return F.l1_loss(n_pred, n_target)
+        n_pred, n_target = normals
+
+        # sign-robust L1
+        l_minus = (n_pred - n_target).abs().sum(dim=-1)
+        l_plus  = (n_pred + n_target).abs().sum(dim=-1)
+        loss = torch.minimum(l_minus, l_plus).mean()
+        return loss
