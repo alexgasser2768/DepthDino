@@ -65,19 +65,25 @@ class ConvNeXtDepthModel(nn.Module):
 
         # --- C. Learnable MLP Decoder ---
         enc_channels = self.backbone.feature_info.channels()
-        self.total_concat_channels = sum(enc_channels)
+        self.total_concat_channels = sum(enc_channels)  # 96 + 192 + 384 + 768 = 1440
 
         # Stage 1: 1/4 -> 1/2
         # Input: feat4 + feat8 + feat16 + feat32 (total_concat_channels)
-        self.up1 = LearnableUpsampleBlock(self.total_concat_channels, 64)
+        self.up1 = LearnableUpsampleBlock(self.total_concat_channels, 512)
         
         # Stage 2: 1/2 -> 1/1 (Original Resolution)
-        # Input: up1 output (32)
-        self.up2 = LearnableUpsampleBlock(64, 32)
+        # Input: up1 output (512)
+        self.up2 = LearnableUpsampleBlock(512, 256)
 
         # Final Projection to Depth (1 channel)
         self.head = nn.Sequential(
-            nn.Conv2d(32, 1, kernel_size=3, padding=1),
+            nn.Conv2d(256, 128, kernel_size=1),
+            nn.GELU(),
+            nn.Conv2d(128, 64, kernel_size=1),
+            nn.GELU(),
+            nn.Conv2d(64, 32, kernel_size=1),
+            nn.GELU(),
+            nn.Conv2d(32, 1, kernel_size=1),
             nn.Softplus() # Force positive depth
         )
 
@@ -112,8 +118,8 @@ class ConvNeXtDepthModel(nn.Module):
         merged = torch.cat([f4, f8_up, f16_up, f32_up], dim=1)
 
         # Final prediction
-        x = self.up1(merged)  # [B, 64, H/2, W/2]
-        x = self.up2(x)       # [B, 32, H, W]
-        depth_map = self.head(x)
+        x = self.up1(merged)      # [B, 512, H/2, W/2]
+        x = self.up2(x)           # [B, 256,   H,   W]
+        depth_map = self.head(x)  # [B,   1,   H,   W]
 
         return depth_map
