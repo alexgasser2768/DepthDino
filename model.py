@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchvision import transforms
 
 import os, json, timm, logging
@@ -64,28 +65,15 @@ class ConvNeXtDepthModel(nn.Module):
 
         # --- C. Learnable MLP Decoder ---
         enc_channels = self.backbone.feature_info.channels()
+        self.total_concat_channels = sum(enc_channels)
 
-        # Stage 1: 1/32 -> 1/16
-        # Input: feat32 (enc_channels[3])
-        self.up1 = LearnableUpsampleBlock(enc_channels[3], enc_channels[2])
+        # Stage 1: 1/4 -> 1/2
+        # Input: feat4 + feat8 + feat16 + feat32 (total_concat_channels)
+        self.up1 = LearnableUpsampleBlock(self.total_concat_channels, 64)
         
-        # Stage 2: 1/16 -> 1/8
-        # Input: up1 output + feat16 skip (enc_channels[2] + enc_channels[2])
-        self.up2 = LearnableUpsampleBlock(enc_channels[2] * 2, enc_channels[1])
-        
-        # Stage 3: 1/8 -> 1/4
-        # Input: up2 output + feat8 skip (enc_channels[1] + enc_channels[1])
-        self.up3 = LearnableUpsampleBlock(enc_channels[1] * 2, enc_channels[0])
-        
-        # Stage 4: 1/4 -> 1/2
-        # Input: up3 output + feat4 skip (enc_channels[0] + enc_channels[0])
-        decoder_ch = enc_channels[0] // 2
-        self.up4 = LearnableUpsampleBlock(enc_channels[0] * 2, decoder_ch)
-        
-        # Stage 5: 1/2 -> 1/1 (Original Resolution)
-        # Note: ConvNeXt doesn't natively output a 1/2 stride feature map due to its 4x4 stem patchify.
-        # So we just upsample without a skip connection here.
-        self.up5 = LearnableUpsampleBlock(decoder_ch, 32)
+        # Stage 2: 1/2 -> 1/1 (Original Resolution)
+        # Input: up1 output (32)
+        self.up2 = LearnableUpsampleBlock(64, 32)
 
         # Final Projection to Depth (1 channel)
         self.head = nn.Sequential(
@@ -99,7 +87,7 @@ class ConvNeXtDepthModel(nn.Module):
                 state_dict = state_dict['model']
 
             # Load everything (Backbone + Decoder)
-            missing, unexpected = self.load_state_dict(state_dict, strict=False)
+            missing, _ = self.load_state_dict(state_dict, strict=False)
 
             if len(missing) == 0:
                 logging.info("Success: Full model (Backbone + MLP) loaded.")
@@ -108,31 +96,24 @@ class ConvNeXtDepthModel(nn.Module):
 
     def forward(self, x):
         # 1. Extract Features (Frozen)
-        # Returns a list: [feat4, feat8, feat16, feat32]
+        # Returns a list: [ f4,    f8,    f16,    f32]
         # Strides:         1/4    1/8    1/16    1/32
         features = self.backbone(x)
-        feat4, feat8, feat16, feat32 = features
+        f4, f8, f16, f32 = features
+        target_size = f4.shape[-2:] # 1/4 resolution
 
-        # 2. Decode & Upsample with Skip Connections
-        # 1/32 -> 1/16
-        x = self.up1(feat32)
-        x = torch.cat([x, feat16], dim=1)  # Concat skip connection
-        
-        # 1/16 -> 1/8
-        x = self.up2(x)
-        x = torch.cat([x, feat8], dim=1)   # Concat skip connection
-        
-        # 1/8 -> 1/4
-        x = self.up3(x)
-        x = torch.cat([x, feat4], dim=1)   # Concat skip connection
-        
-        # 1/4 -> 1/2
-        x = self.up4(x)
-        
-        # 1/2 -> 1/1
-        x = self.up5(x)
+        # 2. Bilinear Upsample all to 1/4 resolution
+        f8_up  = F.interpolate(f8,  size=target_size, mode='bilinear', align_corners=False)
+        f16_up = F.interpolate(f16, size=target_size, mode='bilinear', align_corners=False)
+        f32_up = F.interpolate(f32, size=target_size, mode='bilinear', align_corners=False)
+
+        # 3. Stack (Concatenate)
+        # Resulting shape: [B, sum(C), H/4, W/4]
+        merged = torch.cat([f4, f8_up, f16_up, f32_up], dim=1)
 
         # Final prediction
+        x = self.up1(merged)  # [B, 64, H/2, W/2]
+        x = self.up2(x)       # [B, 32, H, W]
         depth_map = self.head(x)
 
         return depth_map
