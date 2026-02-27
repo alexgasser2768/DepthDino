@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(asctime)s - %(name)s - [%(levelname)s]: %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', filename="log", level=logging.INFO)
 
 class DepthDataset(Dataset):
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, max_samples=None):
         self.data_dir = data_dir
 
         # Find all color files
@@ -32,6 +32,9 @@ class DepthDataset(Dataset):
                 self.data_pairs.append((color_path, depth_path))
             else:
                 logger.warning(f"Depth file missing for {color_path}, skipping.")
+
+        if max_samples is not None:
+            self.data_pairs = self.data_pairs[:max_samples]
 
         logger.info(f"Found {len(self.data_pairs)} valid image-depth pairs.")
 
@@ -110,7 +113,7 @@ def validate(model, loader, criterion, device):
 
 if __name__ == "__main__":
     # Settings
-    DATA_DIR = "data/"
+    DATA_DIR = "datav2/data"
     CONFIG_FILE = "weights/tiny/config.json"
     WEIGHTS_FILE = "weights/tiny/model.safetensors"
     BATCH_SIZE = 300
@@ -141,6 +144,7 @@ if __name__ == "__main__":
     depth_loss = DepthLoss()
     silog_loss = SILogLoss()
     gradient_loss = GradientMatchingLoss()
+    # sn_loss = AleatoricSurfaceNormalLoss()
     vn_loss = VirtualNormalLoss()
 
     criterion = lambda preds, targets: depth_loss(preds, targets) + silog_loss(preds, targets) + gradient_loss(preds, targets) + vn_loss(preds, targets)
