@@ -2,6 +2,7 @@ data/
 venv/
 weights/
 temp/
+depth-anything-3/
 
 log
 

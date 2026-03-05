@@ -34,23 +34,32 @@ class SILogLoss(nn.Module):
         self.lambd = lambd
         self.eps = eps
 
-    def forward(self, pred, target):
+    def forward(self, pred, target, mask=None, weights=None):
         # Only compute on valid depth values (avoid log(0) for target)
-        mask = target > 0
+        if mask is None:
+            mask = target > 0
+            
         if not mask.any():
             return torch.tensor(0.0, device=pred.device, requires_grad=True)
 
         # Clamp pred to avoid log(0) because model uses ReLU
         masked_pred = torch.clamp(pred[mask], min=self.eps) 
+        masked_target = torch.clamp(target[mask], min=self.eps)
         
         # Log difference
-        d = torch.log(masked_pred) - torch.log(target[mask])
+        d = torch.log(masked_pred) - torch.log(masked_target)
 
-        # Scale-invariant formula
-        term1 = torch.mean(d ** 2)
-        term2 = (torch.mean(d) ** 2)
+        if weights is not None:
+            w = weights[mask]
+            w = w / (w.sum() + self.eps)
+            term1 = torch.sum(w * (d ** 2))
+            term2 = torch.sum(w * d) ** 2
+        else:
+            # Scale-invariant formula
+            term1 = torch.mean(d ** 2)
+            term2 = (torch.mean(d) ** 2)
 
-        return torch.sqrt(term1 - self.lambd * term2)
+        return torch.sqrt(torch.clamp(term1 - self.lambd * term2, min=self.eps))
 
 
 class GradientMatchingLoss(nn.Module):
@@ -217,3 +226,32 @@ class VirtualNormalLoss(nn.Module):
             return torch.tensor(0.0, device=pred.device, requires_grad=True)
 
         return F.l1_loss(n_pred, n_target)
+
+
+class DistillationLoss(nn.Module):
+    """
+    Distills knowledge from a teacher model's depth and confidence maps.
+    Uses confidence-weighted SILog loss.
+    """
+    def __init__(self, lambd=0.5):
+        super().__init__()
+        self.depth_loss = DepthLoss()
+        self.grad_loss = GradientMatchingLoss()
+        self.vnl = VirtualNormalLoss()
+        self.silog = SILogLoss(lambd=lambd)
+
+    def forward(self, pred, teacher_depth, teacher_conf):
+        # Ensure shapes match
+        if pred.shape != teacher_depth.shape:
+            teacher_depth = F.interpolate(teacher_depth, size=pred.shape[-2:], mode='bilinear', align_corners=False)
+        if pred.shape != teacher_conf.shape:
+            teacher_conf = F.interpolate(teacher_conf, size=pred.shape[-2:], mode='bilinear', align_corners=False)
+
+        # Use teacher confidence as weights for SILog
+        # Depth Anything V3 confidence is usually in [0, 1]
+        mask = teacher_conf > 0.1 # Ignore extremely low confidence regions
+
+        return self.depth_loss(pred, teacher_depth) + \
+               self.grad_loss(pred, teacher_depth) + \
+               self.vnl(pred, teacher_depth) + \
+               2 * self.silog(pred, teacher_depth, mask=mask, weights=teacher_conf)
