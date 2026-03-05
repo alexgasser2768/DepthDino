@@ -3,8 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
 
-import os, json, timm, logging
-from safetensors.torch import load_file
+import os, timm, logging
 
 logger = logging.getLogger(__name__)
 
@@ -42,24 +41,15 @@ class LearnableUpsampleBlock(nn.Module):
 
 
 class ConvNeXtDepthModel(nn.Module):
-    def __init__(self, config_path, dino_weights_path, mlp_weights_path = None):
+    def __init__(self, arch='convnext_tiny.dinov3_lvd1689m', mlp_weights_path=None, pretrained=True):
         super().__init__()
 
-        # --- A. Parse Config ---
-        with open(config_path, 'r') as f:
-            cfg = json.load(f)
-
-        arch = cfg.get("architecture", "convnext_tiny")
-
         # --- B. Instantiate Backbone (Frozen) ---
-        logger.info(f"Loading Backbone: {arch}")
+        logger.info(f"Loading Backbone from timm: {arch}")
         # global_pool='' ensures we get the 7x7 spatial feature map, not a vector
-        self.backbone = timm.create_model(arch, pretrained=False, features_only=True)
+        self.backbone = timm.create_model(arch, pretrained=pretrained, features_only=True)
 
-        # Load Safetensors and freeze backbone
-        logger.info(f"Loading weights from {dino_weights_path}...")
-        raw_weights = load_file(dino_weights_path)
-        self.backbone.load_state_dict(raw_weights, strict=False)
+        # Freeze backbone
         for param in self.backbone.parameters():
             param.requires_grad = False
 

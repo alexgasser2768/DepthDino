@@ -158,8 +158,6 @@ def validate(model, loader, criterion, device):
 if __name__ == "__main__":
     # Settings
     DATA_DIR = "data/"
-    CONFIG_FILE = "weights/tiny/config.json"
-    WEIGHTS_FILE = "weights/tiny/model.safetensors"
     BATCH_SIZE = 64 
     LEARNING_RATE = 1e-4
     EPOCHS = 50
@@ -187,7 +185,7 @@ if __name__ == "__main__":
 
     # 3. Setup Student Model
     logger.info(f"Initializing student model on {DEVICE}...")
-    model = ConvNeXtDepthModel(CONFIG_FILE, WEIGHTS_FILE, mlp_weights_path="weights/decoder/best_model.pth")
+    model = ConvNeXtDepthModel(arch='convnext_tiny.dinov3_lvd1689m', mlp_weights_path="weights/decoder/best_model.pth")
     model.to(DEVICE)
 
     # 4. Setup Optimizer & Loss

@@ -13,15 +13,13 @@ logging.basicConfig(format='%(asctime)s - %(name)s - [%(levelname)s]: %(message)
 
 def run_webcam():
     # --- Configuration ---
-    CONFIG_FILE = "weights/tiny/config.json"
-    WEIGHTS_FILE = "weights/tiny/model.safetensors" # Or "depth_model_epoch_X.pth" if you trained it
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     INPUT_SIZE = (640, 480)  # Resize to 480p
 
     logger.info(f"Loading model on {DEVICE}...")
 
     # Initialize model
-    model = ConvNeXtDepthModel(CONFIG_FILE, WEIGHTS_FILE, mlp_weights_path="weights/decoder/best_model2.pth")
+    model = ConvNeXtDepthModel(arch='convnext_tiny.dinov3_lvd1689m', mlp_weights_path="weights/decoder/best_model2.pth")
     model.to(DEVICE)
     model.eval()
 
