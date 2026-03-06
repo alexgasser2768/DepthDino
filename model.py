@@ -19,73 +19,55 @@ PREPROCESS = transforms.Compose([
 
 # From MobileNet paper
 class DepthwiseSeparableConv(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1):
+    def __init__(self, in_channels, out_channels, stride=1, upscale_factor=1):
         super().__init__()
 
-        # 1. Depthwise Convolution: Spatial Filtering
-        # By setting groups=in_channels, PyTorch applies exactly one 
-        # spatial filter to each input channel individually.
+        # 1. Depthwise Convolution
         self.depthwise = nn.Conv2d(
-            in_channels=in_channels, 
-            out_channels=in_channels, 
+            in_channels=in_channels,
+            out_channels=in_channels,
             kernel_size=3,
             stride=stride,
             padding=1,
             groups=in_channels,
-            bias=False           # No bias needed before BatchNorm
+            bias=False  # Batch norm handles the bias
         )
         self.bn_dw = nn.BatchNorm2d(in_channels)
         self.act_dw = nn.ReLU(inplace=True)
 
-        # 2. Pointwise Convolution: Channel Mixing
-        # A standard 1x1 convolution to linearly combine the channels.
+        # If upscale=1, multiplier is 1 (normal pointwise).
+        # If upscale=2, multiplier is 4 (expanded pointwise for upsampling).
+        expansion_multiplier = upscale_factor ** 2
+        pw_out_channels = out_channels * expansion_multiplier
+
+        # 2. Pointwise Convolution (Handles dynamic expansion)
         self.pointwise = nn.Conv2d(
-            in_channels=in_channels, 
-            out_channels=out_channels, 
-            kernel_size=1, 
-            stride=1, 
-            padding=0, 
-            bias=False
+            in_channels=in_channels,
+            out_channels=pw_out_channels,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            bias=False  # Batchnorm handles the bias
         )
+
+        # 3. Pixel Shuffle
+        # Acts as an identity pass-through if upscale_factor == 1
+        self.pixel_shuffle = nn.PixelShuffle(upscale_factor)
+
+        # 4. Final Normalization and Activation
         self.bn_pw = nn.BatchNorm2d(out_channels)
         self.act_pw = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        # Apply depthwise spatial filtering
         x = self.depthwise(x)
         x = self.bn_dw(x)
         x = self.act_dw(x)
-
-        # Apply pointwise channel mixing
+        
         x = self.pointwise(x)
+        x = self.pixel_shuffle(x) 
         x = self.bn_pw(x)
         x = self.act_pw(x)
         
-        return x
-
-
-class LearnableUpsampleBlock(DepthwiseSeparableConv):
-    def __init__(self, in_channels, out_channels):
-        # To upsample by 2x, we need 4x the channels (2*2).
-        super().__init__(in_channels, out_channels * 4, stride=1)
-        self.pixel_shuffle = nn.PixelShuffle(upscale_factor=2)  # PixelShuffle packs channels into space.
-
-    def forward(self, x):
-        # Step 1: Spatial filtering with intermediate stabilization
-        x = self.depthwise(x)
-        x = self.bn_dw(x)
-        x = self.act_dw(x)
-
-        # Step 2: Channel mixing and expansion for upsampling
-        x = self.pointwise(x)
-
-        # Step 3: Shift channels into spatial dimensions
-        x = self.pixel_shuffle(x)  # [B, C*4, H, W] -> [B, C, H*2, W*2]
-
-        # Step 4: Final normalization and activation on the upsampled features
-        x = self.bn_pw(x)
-        x = self.act_pw(x)
-
         return x
 
 
@@ -108,27 +90,21 @@ class ConvNeXtDepthModel(nn.Module):
 
         # Stage 1: 1/4 -> 1/2
         # Input: feat4 + feat8 + feat16 + feat32 (total_concat_channels)
-        self.up1 = LearnableUpsampleBlock(self.total_concat_channels, 512)
-        
+        self.up1 = DepthwiseSeparableConv(self.total_concat_channels, 256, upscale_factor=2)  # Upscales to 1/2 resolution
+
         # Stage 2: 1/2 -> 1/1 (Original Resolution)
-        # Input: up1 output (512)
-        self.up2 = LearnableUpsampleBlock(512, 256)
+        self.up2 = DepthwiseSeparableConv(256, 128, upscale_factor=2)  # Upscales to original resolution
 
         # Final Projection to Depth (1 channel)
         self.head = nn.Sequential(
-            nn.Conv2d(256, 128, kernel_size=1),
-            nn.GELU(),
-            nn.Conv2d(128, 64, kernel_size=1),
-            nn.GELU(),
-            nn.Conv2d(64, 32, kernel_size=1),
-            nn.GELU(),
-            nn.Conv2d(32, 1, kernel_size=1),
-            nn.Softplus() # Force positive depth
+            DepthwiseSeparableConv(128, 64),
+            nn.Conv2d(64, 1, kernel_size=1, stride=1, padding=0),
+            nn.Softplus()
         )
 
         if mlp_weights_path is not None and os.path.exists(mlp_weights_path):
             state_dict = torch.load(mlp_weights_path, map_location='cpu')
-            if 'model' in state_dict: 
+            if 'model' in state_dict:
                 state_dict = state_dict['model']
 
             # Load everything (Backbone + Decoder)
@@ -157,8 +133,8 @@ class ConvNeXtDepthModel(nn.Module):
         merged = torch.cat([f4, f8_up, f16_up, f32_up], dim=1)
 
         # Final prediction
-        x = self.up1(merged)      # [B, 512, H/2, W/2]
-        x = self.up2(x)           # [B, 256,   H,   W]
+        x = self.up1(merged)      # [B, 256, H/2, W/2]
+        x = self.up2(x)           # [B, 128,   H,   W]
         depth_map = self.head(x)  # [B,   1,   H,   W]
 
         return depth_map

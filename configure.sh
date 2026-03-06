@@ -1,7 +1,6 @@
 # Check if data directory exists, if not download dataset
 if [ ! -d "data" ]; then
     echo "Data directory not found. Downloading dataset..."
-    mkdir data
     wget http://images.cocodataset.org/zips/unlabeled2017.zip
     unzip unlabeled2017.zip -d data/
     rm unlabeled2017.zip
