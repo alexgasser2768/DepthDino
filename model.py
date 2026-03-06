@@ -90,16 +90,16 @@ class ConvNeXtDepthModel(nn.Module):
 
         # Stage 1: 1/4 -> 1/2
         # Input: feat4 + feat8 + feat16 + feat32 (total_concat_channels)
-        self.up1 = DepthwiseSeparableConv(self.total_concat_channels, 256, upscale_factor=2)  # Upscales to 1/2 resolution
+        self.up1 = DepthwiseSeparableConv(self.total_concat_channels, 256, upscale_factor=2)
 
         # Stage 2: 1/2 -> 1/1 (Original Resolution)
-        self.up2 = DepthwiseSeparableConv(256, 128, upscale_factor=2)  # Upscales to original resolution
+        self.up2 = DepthwiseSeparableConv(256, 128, upscale_factor=2)
 
         # Final Projection to Depth (1 channel)
         self.head = nn.Sequential(
             DepthwiseSeparableConv(128, 64),
             nn.Conv2d(64, 1, kernel_size=1, stride=1, padding=0),
-            nn.Softplus()
+            nn.ReLU()
         )
 
         if mlp_weights_path is not None and os.path.exists(mlp_weights_path):
