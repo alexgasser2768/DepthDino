@@ -18,25 +18,74 @@ PREPROCESS = transforms.Compose([
 ])
 
 
-class LearnableUpsampleBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+# From MobileNet paper
+class DepthwiseSeparableConv(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1):
         super().__init__()
-        # PixelShuffle packs channels into space. 
-        # To upsample by 2x, we need 4x the channels (2*2).
-        self.conv = nn.Conv2d(in_channels, out_channels * 4, kernel_size=3, padding=1)
-        self.act = nn.GELU()
-        self.pixel_shuffle = nn.PixelShuffle(upscale_factor=2)
-        self.norm = nn.LayerNorm(out_channels)
+
+        # 1. Depthwise Convolution: Spatial Filtering
+        # By setting groups=in_channels, PyTorch applies exactly one 
+        # spatial filter to each input channel individually.
+        self.depthwise = nn.Conv2d(
+            in_channels=in_channels, 
+            out_channels=in_channels, 
+            kernel_size=3,
+            stride=stride,
+            padding=1,
+            groups=in_channels,
+            bias=False           # No bias needed before BatchNorm
+        )
+        self.bn_dw = nn.BatchNorm2d(in_channels)
+        self.act_dw = nn.ReLU(inplace=True)
+
+        # 2. Pointwise Convolution: Channel Mixing
+        # A standard 1x1 convolution to linearly combine the channels.
+        self.pointwise = nn.Conv2d(
+            in_channels=in_channels, 
+            out_channels=out_channels, 
+            kernel_size=1, 
+            stride=1, 
+            padding=0, 
+            bias=False
+        )
+        self.bn_pw = nn.BatchNorm2d(out_channels)
+        self.act_pw = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        x = self.conv(x)
-        x = self.act(x)
-        x = self.pixel_shuffle(x) # [B, C*4, H, W] -> [B, C, H*2, W*2]
+        # Apply depthwise spatial filtering
+        x = self.depthwise(x)
+        x = self.bn_dw(x)
+        x = self.act_dw(x)
 
-        # Apply LayerNorm (channels last)
-        x = x.permute(0, 2, 3, 1) # [N, C, H, W] -> [N, H, W, C]
-        x = self.norm(x)
-        x = x.permute(0, 3, 1, 2) # [N, H, W, C] -> [N, C, H, W]
+        # Apply pointwise channel mixing
+        x = self.pointwise(x)
+        x = self.bn_pw(x)
+        x = self.act_pw(x)
+        
+        return x
+
+
+class LearnableUpsampleBlock(DepthwiseSeparableConv):
+    def __init__(self, in_channels, out_channels):
+        # To upsample by 2x, we need 4x the channels (2*2).
+        super().__init__(in_channels, out_channels * 4, stride=1)
+        self.pixel_shuffle = nn.PixelShuffle(upscale_factor=2)  # PixelShuffle packs channels into space.
+
+    def forward(self, x):
+        # Step 1: Spatial filtering with intermediate stabilization
+        x = self.depthwise(x)
+        x = self.bn_dw(x)
+        x = self.act_dw(x)
+
+        # Step 2: Channel mixing and expansion for upsampling
+        x = self.pointwise(x)
+
+        # Step 3: Shift channels into spatial dimensions
+        x = self.pixel_shuffle(x)  # [B, C*4, H, W] -> [B, C, H*2, W*2]
+
+        # Step 4: Final normalization and activation on the upsampled features
+        x = self.bn_pw(x)
+        x = self.act_pw(x)
 
         return x
 

@@ -3,6 +3,8 @@ venv/
 weights/
 temp/
 depth-anything-3/
+*.zip
+*.tar*
 
 log
 
