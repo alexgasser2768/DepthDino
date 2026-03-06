@@ -252,6 +252,6 @@ class DistillationLoss(nn.Module):
         mask = teacher_conf > 0.1 # Ignore extremely low confidence regions
 
         return self.depth_loss(pred, teacher_depth) + \
-               self.grad_loss(pred, teacher_depth) + \
+               2 * self.grad_loss(pred, teacher_depth) + \
                self.vnl(pred, teacher_depth) + \
-               2 * self.silog(pred, teacher_depth, mask=mask, weights=teacher_conf)
+               5 * self.silog(pred, teacher_depth, mask=mask, weights=teacher_conf)

@@ -2,7 +2,8 @@
 if [ ! -d "data" ]; then
     echo "Data directory not found. Downloading dataset..."
     wget http://images.cocodataset.org/zips/unlabeled2017.zip
-    unzip unlabeled2017.zip -d data/
+    unzip unlabeled2017.zip
+    mv unlabeled2017 data
     rm unlabeled2017.zip
 fi
 

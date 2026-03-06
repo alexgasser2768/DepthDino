@@ -1,9 +1,12 @@
 import torch
+from torchvision import transforms as T
+
 import numpy as np
 import matplotlib.pyplot as plt
-import cv2, time, logging
+import cv2, time, logging, PIL.Image
 
-from model import ConvNeXtDepthModel, PREPROCESS
+from model import ConvNeXtDepthModel
+
 
 CMAP = plt.get_cmap('Spectral')
 
@@ -41,13 +44,14 @@ def run_webcam():
 
             # OpenCV is BGR, Model needs RGB
             frame = cv2.resize(frame, INPUT_SIZE)
-            img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            input_tensor = PREPROCESS(img_rgb).unsqueeze(0).to(DEVICE)
+            img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img_rgb = PIL.Image.fromarray(img_rgb)
+            input_tensor = model.transforms(img_rgb).unsqueeze(0).to(DEVICE)
 
             # Remove batch dim and move to CPU
             depth_map = model(input_tensor)
             depth_np = depth_map.squeeze().cpu().numpy()
-            
+
             # Normalize to 0-255 for visualization
             # (We use dynamic normalization based on min/max in the current frame)
             d_min, d_max = depth_np.min(), depth_np.max()

@@ -1,20 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import transforms
+import torchvision.transforms as T
 
 import os, timm, logging
 
 logger = logging.getLogger(__name__)
-
-
-PREPROCESS = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225]
-    ),
-])
 
 
 # From MobileNet paper
@@ -75,16 +66,21 @@ class ConvNeXtDepthModel(nn.Module):
     def __init__(self, arch='convnext_tiny.dinov3_lvd1689m', mlp_weights_path=None, pretrained=True):
         super().__init__()
 
-        # --- B. Instantiate Backbone (Frozen) ---
+        # --- Instantiate Backbone (Frozen) ---
         logger.info(f"Loading Backbone from timm: {arch}")
-        # global_pool='' ensures we get the 7x7 spatial feature map, not a vector
         self.backbone = timm.create_model(arch, pretrained=pretrained, features_only=True)
+        self.backbone.eval()  # Set to eval mode since it's frozen
+
+        self.transforms = T.Compose([
+            T.ToTensor(),
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
 
         # Freeze backbone
         for param in self.backbone.parameters():
             param.requires_grad = False
 
-        # --- C. Learnable MLP Decoder ---
+        # --- Learnable MLP Decoder ---
         enc_channels = self.backbone.feature_info.channels()
         self.total_concat_channels = sum(enc_channels)  # 96 + 192 + 384 + 768 = 1440
 
@@ -102,6 +98,7 @@ class ConvNeXtDepthModel(nn.Module):
             nn.ReLU()
         )
 
+        # --- Load Saved Model Weights ---
         if mlp_weights_path is not None and os.path.exists(mlp_weights_path):
             state_dict = torch.load(mlp_weights_path, map_location='cpu')
             if 'model' in state_dict:
