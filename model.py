@@ -84,17 +84,14 @@ class ConvNeXtDepthModel(nn.Module):
         enc_channels = self.backbone.feature_info.channels()
         self.total_concat_channels = sum(enc_channels)  # 96 + 192 + 384 + 768 = 1440
 
-        # Stage 1: 1/4 -> 1/2
         # Input: feat4 + feat8 + feat16 + feat32 (total_concat_channels)
-        self.up1 = DepthwiseSeparableConv(self.total_concat_channels, 256, upscale_factor=2)
-
-        # Stage 2: 1/2 -> 1/1 (Original Resolution)
-        self.up2 = DepthwiseSeparableConv(256, 128, upscale_factor=2)
-
-        # Final Projection to Depth (1 channel)
         self.head = nn.Sequential(
-            DepthwiseSeparableConv(128, 64),
-            nn.Conv2d(64, 1, kernel_size=1, stride=1, padding=0),
+            DepthwiseSeparableConv(self.total_concat_channels, 512),
+            DepthwiseSeparableConv(512, 256),
+            DepthwiseSeparableConv(256, 128),
+            DepthwiseSeparableConv(128, 64, upscale_factor=2),     # Stage 1: 1/4 -> 1/2
+            DepthwiseSeparableConv(64, 32, upscale_factor=2),      # Stage 2: 1/2 -> 1/1 (Original Resolution)
+            nn.Conv2d(32, 1, kernel_size=1, stride=1, padding=0),  # Final Projection to Depth (1 channel)
             nn.ReLU()
         )
 
@@ -130,8 +127,6 @@ class ConvNeXtDepthModel(nn.Module):
         merged = torch.cat([f4, f8_up, f16_up, f32_up], dim=1)
 
         # Final prediction
-        x = self.up1(merged)      # [B, 256, H/2, W/2]
-        x = self.up2(x)           # [B, 128,   H,   W]
-        depth_map = self.head(x)  # [B,   1,   H,   W]
+        depth_map = self.head(merged)  # [B,   1,   H,   W]
 
         return depth_map

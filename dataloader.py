@@ -96,6 +96,7 @@ class DepthDataset(Dataset):
             conf_tensor = TF.vflip(conf_tensor)
 
         # 4. Crop to Patch Size
+        
         w, h = image_tensor.shape[2], image_tensor.shape[1]
         top = np.random.randint(0, h - self.patch_height + 1)
         left = np.random.randint(0, w - self.patch_width + 1)

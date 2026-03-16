@@ -60,11 +60,11 @@ def validate(model, loader, criterion, device):
 
 if __name__ == "__main__":
     # Settings
-    DATA_DIR = "data/"
-    BATCH_SIZE = 500
+    DATA_DIR = "data/unlabeled2017/"
+    BATCH_SIZE = 125
     LEARNING_RATE = 1e-4
     EPOCHS = 50
-    PATCH_SIZE = 224
+    PATCH_SIZE = 160
     NUM_WORKERS = 16
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
